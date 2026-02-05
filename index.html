@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Smart Platformer (Fixed)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body { margin: 0; background: linear-gradient(#87ceeb, #d0f4f7); font-family: system-ui, sans-serif; overflow: hidden; }
+    canvas { display: block; margin: 0 auto; background: #5cc25c; image-rendering: pixelated; border-bottom: 6px solid #3a7f3a; }
+    #ui { position: fixed; top: 10px; left: 10px; background: rgba(255,255,255,0.7); padding: 8px 12px; border-radius: 8px; font-weight: bold; }
+    #help { position: fixed; bottom: 10px; right: 10px; background: rgba(0,0,0,0.6); color: white; padding: 8px 12px; border-radius: 8px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div id="ui">Lives: 1 | Score: <span id="score">0</span> | Level: <span id="level">1</span></div>
+  <div id="help">Move: A / D or ← →<br>Jump: W / ↑ / Space</div>
+  <canvas id="game" width="900" height="450"></canvas>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const gravity = 0.6;
+const keys = {};
+
+const player = { x: 50, y: 0, w: 28, h: 40, vx: 0, vy: 0, speed: 4, jump: 12, onGround: false, score: 0 };
+
+// --- LEVEL GENERATION ---
+const LEVEL_COUNT = 10;
+
+function randomPlatforms(level) {
+  const plats = [{ x: 0, y: 410, w: 900, h: 40 }]; // ground always exists
+  const count = 3 + Math.floor(level / 2);
+
+  let lastX = 100;
+  let lastY = 340;
+
+  for (let i = 0; i < count; i++) {
+    lastX += 120 + Math.random() * 120;
+    lastY -= 30 + Math.random() * 40;
+
+    // keep platforms reachable and on-screen
+    lastX = Math.min(lastX, 760);
+    lastY = Math.max(lastY, 120);
+
+    plats.push({
+      x: lastX,
+      y: lastY,
+      w: 120,
+      h: 20
+    });
+  }
+
+  return plats;
+}
+
+function randomEnemies(level) {
+  const count = 1 + Math.floor(level / 2);
+  return Array.from({ length: count }, (_, i) => ({
+    x: 200 + i * 180,
+    y: 0
+  }));
+}
+
+const levels = Array.from({ length: LEVEL_COUNT }, (_, i) => ({
+  platforms: randomPlatforms(i),
+  enemies: randomEnemies(i)
+}));
+
+let levelIndex = 0;
+let platforms = [];
+let enemies = [];
+
+// --- ENEMY ---
+class Enemy {
+  constructor(x, y) {
+    this.x = x; this.y = y;
+    this.w = 26; this.h = 26;
+    this.vx = 0; this.vy = 0;
+    this.speed = 2;
+    this.onGround = false;
+  }
+
+  update() {
+    const dx = player.x - this.x;
+    this.vx = Math.sign(dx) * this.speed;
+
+    if (this.onGround && Math.abs(dx) < 180 && Math.random() < 0.02) {
+      this.vy = -10;
+      this.onGround = false;
+    }
+
+    this.vy += gravity;
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // bounds
+    if (this.x < 0) this.x = 0;
+    if (this.x + this.w > canvas.width) this.x = canvas.width - this.w;
+
+    this.onGround = false;
+    for (const p of platforms) {
+      if (collide(this, p) && this.vy >= 0) {
+        this.y = p.y - this.h;
+        this.vy = 0;
+        this.onGround = true;
+      }
+    }
+  }
+
+  draw() {
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(this.x, this.y, this.w, this.h);
+  }
+}
+
+function loadLevel(i) {
+  levelIndex = i;
+
+  // regenerate layout every time
+  platforms = randomPlatforms(i);
+  enemies = randomEnemies(i).map(e => new Enemy(e.x, e.y));
+
+  player.x = 50;
+  player.y = 0;
+  player.vx = 0;
+  player.vy = 0;
+
+  document.getElementById('level').textContent = i + 1;
+}
+
+function collide(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function updatePlayer() {
+  player.vx = 0;
+  if (keys['a'] || keys['ArrowLeft']) player.vx = -player.speed;
+  if (keys['d'] || keys['ArrowRight']) player.vx = player.speed;
+
+  if ((keys['w'] || keys['ArrowUp'] || keys[' ']) && player.onGround) {
+    player.vy = -player.jump;
+    player.onGround = false;
+  }
+
+  player.vy += gravity;
+  player.x += player.vx;
+  player.y += player.vy;
+
+  // HARD WORLD BOUNDS (prevents leaving screen)
+  if (player.x < 0) player.x = 0;
+  if (player.x + player.w > canvas.width) player.x = canvas.width - player.w;
+
+  // kill plane (fell off world)
+  if (player.y > canvas.height + 100) {
+    alert('You fell! Restarting from level 1.');
+    player.score = 0;
+    loadLevel(0);
+    return;
+  }
+
+  player.onGround = false;
+  for (const p of platforms) {
+    if (collide(player, p) && player.vy >= 0) {
+      player.y = p.y - player.h;
+      player.vy = 0;
+      player.onGround = true;
+    }
+  }
+
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    if (collide(player, e)) {
+      if (player.vy > 0) {
+        player.vy = -8;
+        player.score += 100;
+        enemies.splice(i, 1);
+      } else {
+        alert('You died! Restarting from level 1.');
+        player.score = 0;
+        loadLevel(0);
+        return;
+      }
+    }
+  }
+
+  if (player.x > canvas.width - 40) {
+    if (levelIndex < levels.length - 1) loadLevel(levelIndex + 1);
+    else alert('You win!');
+  }
+
+  document.getElementById('score').textContent = player.score;
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#3a7f3a';
+  platforms.forEach(p => ctx.fillRect(p.x, p.y, p.w, p.h));
+  ctx.fillStyle = '#2c3e50';
+  ctx.fillRect(player.x, player.y, player.w, player.h);
+  enemies.forEach(e => { e.update(); e.draw(); });
+}
+
+function loop() {
+  updatePlayer();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener('keydown', e => keys[e.key] = true);
+window.addEventListener('keyup', e => keys[e.key] = false);
+
+loadLevel(0);
+loop();
+</script>
+</body>
+</html>
